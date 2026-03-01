@@ -1,5 +1,5 @@
 name: Sendspin USB Players
-version: "0.3.0"
+version: "0.4.0"
 slug: sendspin-usb
 description: Auto-detects USB audio devices and registers each as a Music Assistant player via sendspin.
 arch:

@@ -7,7 +7,7 @@ if [ -f /data/options.json ]; then
     level=$(grep -o '"log_level"\s*:\s*"[^"]*"' /data/options.json | sed 's/.*"\([^"]*\)"$/\1/')
     [ -n "$level" ] && LOG_LEVEL="$level"
 fi
-VERSION="0.3.0"
+VERSION="0.4.0"
 echo "[INFO] Sendspin USB Players v${VERSION} starting (log_level=${LOG_LEVEL})"
 
 # --- Signal handling ---
@@ -32,7 +32,6 @@ CARD_COUNT=0
 
 for pcm in /dev/snd/pcmC*D*p; do
     [ -e "$pcm" ] || continue
-    # Extract card number from pcmC<num>D<dev>p
     card_num=$(echo "$pcm" | sed 's|.*/pcmC\([0-9]*\)D.*|\1|')
 
     # Try to get friendly name from by-id symlinks
@@ -47,20 +46,24 @@ for pcm in /dev/snd/pcmC*D*p; do
     done
     [ -z "$card_name" ] && card_name="Audio-Card-${card_num}"
 
-    card_id="sendspin-usb-${card_num}"
+    # --- Create ALSA config so PortAudio can find the device ---
+    cat >> /etc/asound.conf <<ALSA
+pcm.card${card_num} {
+    type hw
+    card ${card_num}
+}
+ctl.card${card_num} {
+    type hw
+    card ${card_num}
+}
+ALSA
 
-    echo "[INFO] Found card ${card_num}: ${card_name} -> hw:${card_num}"
-
-    sendspin daemon \
-        --name "$card_name" \
-        --audio-device "hw:${card_num}" \
-        --id "$card_id" \
-        --log-level "$LOG_LEVEL" &
-    PIDS="$PIDS $!"
     CARD_COUNT=$((CARD_COUNT + 1))
+    # Store for later (sh-compatible, no arrays)
+    eval "CARD_NUM_${CARD_COUNT}=${card_num}"
+    eval "CARD_NAME_${CARD_COUNT}=${card_name}"
 done
 
-# --- Fallback if no devices found ---
 if [ "$CARD_COUNT" -eq 0 ]; then
     echo "[WARNING] No playback devices found in /dev/snd/."
     echo "[WARNING] Idling. Restart add-on after connecting USB audio."
@@ -68,6 +71,46 @@ if [ "$CARD_COUNT" -eq 0 ]; then
     wait
     exit 0
 fi
+
+# Set first detected card as default
+eval "first_card=\$CARD_NUM_1"
+cat >> /etc/asound.conf <<ALSA
+pcm.!default {
+    type hw
+    card ${first_card}
+}
+ctl.!default {
+    type hw
+    card ${first_card}
+}
+ALSA
+
+echo "[DEBUG] /etc/asound.conf:"
+cat /etc/asound.conf
+echo "[DEBUG] ---"
+
+# --- Debug: what does PortAudio/sounddevice see? ---
+echo "[DEBUG] sounddevice devices:"
+python3 -c "import sounddevice; print(sounddevice.query_devices())" 2>&1 || echo "[DEBUG] sounddevice query failed"
+echo "[DEBUG] ---"
+
+# --- Start daemons ---
+i=1
+while [ "$i" -le "$CARD_COUNT" ]; do
+    eval "card_num=\$CARD_NUM_${i}"
+    eval "card_name=\$CARD_NAME_${i}"
+    card_id="sendspin-usb-${card_num}"
+
+    echo "[INFO] Starting daemon for card ${card_num}: ${card_name} -> hw:${card_num}"
+
+    sendspin daemon \
+        --name "$card_name" \
+        --audio-device "hw:${card_num}" \
+        --id "$card_id" \
+        --log-level "$LOG_LEVEL" &
+    PIDS="$PIDS $!"
+    i=$((i + 1))
+done
 
 echo "[INFO] Started ${CARD_COUNT} sendspin daemon(s). Waiting..."
 wait
