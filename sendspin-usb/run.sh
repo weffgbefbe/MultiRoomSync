@@ -7,7 +7,7 @@ if [ -f /data/options.json ]; then
     level=$(grep -o '"log_level"\s*:\s*"[^"]*"' /data/options.json | sed 's/.*"\([^"]*\)"$/\1/')
     [ -n "$level" ] && LOG_LEVEL="$level"
 fi
-VERSION="0.7.1"
+VERSION="0.8.0"
 echo "[INFO] Sendspin USB Players v${VERSION} starting (log_level=${LOG_LEVEL})"
 
 # --- Signal handling ---
@@ -23,7 +23,7 @@ cleanup() {
 }
 trap cleanup SIGTERM SIGINT
 
-# --- Debug: what do the audio subsystems see? ---
+# --- Debug output ---
 echo "[DEBUG] PulseAudio sinks:"
 pactl list sinks short 2>&1 || echo "[DEBUG] pactl failed"
 echo "[DEBUG] sendspin devices:"
@@ -31,10 +31,9 @@ sendspin --list-audio-devices 2>&1 || echo "[DEBUG] sendspin list failed"
 echo "[DEBUG] ---"
 
 # --- Enumerate PulseAudio output sinks ---
-CARD_COUNT=0
-SINK_LIST=$(pactl list sinks short 2>/dev/null) || true
+SINK_NAMES=$(pactl list sinks short 2>/dev/null | awk '{print $2}') || true
 
-if [ -z "$SINK_LIST" ]; then
+if [ -z "$SINK_NAMES" ]; then
     echo "[WARNING] No PulseAudio sinks found."
     echo "[WARNING] Idling. Restart add-on after connecting USB audio."
     tail -f /dev/null &
@@ -42,9 +41,13 @@ if [ -z "$SINK_LIST" ]; then
     exit 0
 fi
 
-echo "$SINK_LIST" | while IFS= read -r line; do
-    # Format: "INDEX  SINK_NAME  MODULE  SAMPLE_SPEC  STATE"
-    sink_name=$(echo "$line" | awk '{print $2}')
+# --- Start one sendspin daemon per sink ---
+CARD_COUNT=0
+
+# Write sink names to temp file to avoid pipe subshell
+echo "$SINK_NAMES" > /tmp/sinks.txt
+
+while IFS= read -r sink_name; do
     [ -z "$sink_name" ] && continue
 
     # Get human-readable description for display in Music Assistant
@@ -53,26 +56,25 @@ echo "$SINK_LIST" | while IFS= read -r line; do
 
     card_id="sendspin-$(echo "$sink_name" | md5sum | cut -c1-8)"
 
-    echo "[INFO] Starting daemon: ${sink_desc} (sink=${sink_name}, id=${card_id})"
+    echo "[INFO] Starting daemon: ${sink_desc} (device=${sink_name}, id=${card_id})"
 
-    # Pass sink description as audio-device name prefix (sendspin matches via startswith)
+    # Pass PulseAudio sink name as audio-device (matches sendspin device name exactly)
     sendspin daemon \
         --name "$sink_desc" \
-        --audio-device "$sink_desc" \
+        --audio-device "$sink_name" \
         --id "$card_id" \
         --log-level "$LOG_LEVEL" &
     PIDS="$PIDS $!"
     CARD_COUNT=$((CARD_COUNT + 1))
-done
 
-# Check if any daemons were started (pipe subshell issue workaround)
-if ! kill -0 $PIDS 2>/dev/null; then
+done < /tmp/sinks.txt
+
+if [ "$CARD_COUNT" -eq 0 ]; then
     echo "[WARNING] No daemons started."
-    echo "[WARNING] Idling. Restart add-on after connecting USB audio."
     tail -f /dev/null &
     wait
     exit 0
 fi
 
-echo "[INFO] Sendspin daemons running. Waiting..."
+echo "[INFO] Started ${CARD_COUNT} sendspin daemon(s). Waiting..."
 wait
