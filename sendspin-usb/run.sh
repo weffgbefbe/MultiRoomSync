@@ -22,27 +22,30 @@ cleanup() {
 }
 trap cleanup SIGTERM SIGINT
 
-# --- Detect audio devices from /proc/asound/cards ---
-if [ ! -f /proc/asound/cards ]; then
-    echo "[WARNING] /proc/asound/cards not found — no ALSA devices available."
+# --- Debug: show what audio access we have ---
+echo "[DEBUG] /proc/asound/cards exists: $([ -f /proc/asound/cards ] && echo yes || echo no)"
+echo "[DEBUG] /dev/snd contents: $(ls /dev/snd/ 2>/dev/null || echo 'not available')"
+echo "[DEBUG] aplay -l output:"
+aplay -l 2>&1 || true
+echo "[DEBUG] ---"
+
+# --- Detect audio devices via aplay -l ---
+CARD_COUNT=0
+APLAY_OUTPUT=$(aplay -l 2>/dev/null) || true
+
+if [ -z "$APLAY_OUTPUT" ]; then
+    echo "[WARNING] No ALSA devices found (aplay -l returned nothing)."
     echo "[WARNING] Idling. Restart add-on after connecting USB audio."
     tail -f /dev/null &
     wait
     exit 0
 fi
 
-CARD_COUNT=0
-
-while IFS= read -r line; do
-    # Lines with card numbers look like: " 1 [K5Pro          ]: USB-Audio - FiiO K5 Pro"
-    card_num=$(echo "$line" | grep -oE '^\s*[0-9]+' | tr -d ' ')
-    [ -z "$card_num" ] && continue
-
-    # Next line has the long name — but we can parse name from this line too
-    card_name=$(echo "$line" | sed 's/.*- //')
-    [ -z "$card_name" ] && card_name="USB-Audio-${card_num}"
-
-    # Sanitize name for use as ID
+# Parse "card X: <name> [<longname>]" lines from aplay -l
+echo "$APLAY_OUTPUT" | grep '^card ' | while IFS= read -r line; do
+    card_num=$(echo "$line" | sed 's/^card \([0-9]*\):.*/\1/')
+    card_name=$(echo "$line" | sed 's/^card [0-9]*: \([^[]*\)\[.*/\1/' | sed 's/ *$//')
+    [ -z "$card_name" ] && card_name="Audio-${card_num}"
     card_id="sendspin-usb-${card_num}"
 
     echo "[INFO] Found card ${card_num}: ${card_name} -> ${card_id}"
@@ -54,8 +57,7 @@ while IFS= read -r line; do
         --log-level "$LOG_LEVEL" &
     PIDS="$PIDS $!"
     CARD_COUNT=$((CARD_COUNT + 1))
-
-done < /proc/asound/cards
+done
 
 # --- Fallback if no devices found ---
 if [ "$CARD_COUNT" -eq 0 ]; then
