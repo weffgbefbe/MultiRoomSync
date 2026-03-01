@@ -14,7 +14,7 @@ RUN apk add --no-cache --virtual .build-deps \
     && rm -rf /tmp/portaudio \
     && apk del .build-deps
 
-RUN apk add --no-cache alsa-lib alsa-utils pulseaudio-utils pulseaudio-libs python3 py3-pip \
+RUN apk add --no-cache alsa-lib alsa-utils pulseaudio-utils python3 py3-pip \
     && pip install --no-cache-dir --break-system-packages sendspin
 
 COPY run.sh /run.sh
