@@ -1,0 +1,17 @@
+name: Sendspin USB Players
+version: "0.1.0"
+slug: sendspin-usb
+description: Auto-detects USB audio devices and registers each as a Music Assistant player via sendspin.
+arch:
+  - amd64
+  - aarch64
+startup: services
+boot: auto
+init: false
+host_network: true
+audio: true
+full_access: true
+options:
+  log_level: "INFO"
+schema:
+  log_level: "list(DEBUG|INFO|WARNING|ERROR)"
