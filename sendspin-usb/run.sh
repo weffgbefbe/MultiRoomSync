@@ -7,7 +7,8 @@ if [ -f /data/options.json ]; then
     level=$(grep -o '"log_level"\s*:\s*"[^"]*"' /data/options.json | sed 's/.*"\([^"]*\)"$/\1/')
     [ -n "$level" ] && LOG_LEVEL="$level"
 fi
-VERSION="0.4.0"
+VERSION="0.5.0"
+export ALSA_CONFIG_PATH="/tmp/asound.conf"
 echo "[INFO] Sendspin USB Players v${VERSION} starting (log_level=${LOG_LEVEL})"
 
 # --- Signal handling ---
@@ -47,7 +48,7 @@ for pcm in /dev/snd/pcmC*D*p; do
     [ -z "$card_name" ] && card_name="Audio-Card-${card_num}"
 
     # --- Create ALSA config so PortAudio can find the device ---
-    cat >> /etc/asound.conf <<ALSA
+    cat >> /tmp/asound.conf <<ALSA
 pcm.card${card_num} {
     type hw
     card ${card_num}
@@ -74,7 +75,7 @@ fi
 
 # Set first detected card as default
 eval "first_card=\$CARD_NUM_1"
-cat >> /etc/asound.conf <<ALSA
+cat >> /tmp/asound.conf <<ALSA
 pcm.!default {
     type hw
     card ${first_card}
@@ -85,8 +86,8 @@ ctl.!default {
 }
 ALSA
 
-echo "[DEBUG] /etc/asound.conf:"
-cat /etc/asound.conf
+echo "[DEBUG] /tmp/asound.conf:"
+cat /tmp/asound.conf
 echo "[DEBUG] ---"
 
 # --- Debug: what does PortAudio/sounddevice see? ---
