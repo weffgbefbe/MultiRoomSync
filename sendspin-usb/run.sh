@@ -7,7 +7,8 @@ if [ -f /data/options.json ]; then
     level=$(grep -o '"log_level"\s*:\s*"[^"]*"' /data/options.json | sed 's/.*"\([^"]*\)"$/\1/')
     [ -n "$level" ] && LOG_LEVEL="$level"
 fi
-echo "[INFO] Sendspin USB Players starting (log_level=${LOG_LEVEL})"
+VERSION="0.2.0"
+echo "[INFO] Sendspin USB Players v${VERSION} starting (log_level=${LOG_LEVEL})"
 
 # --- Signal handling ---
 PIDS=""
