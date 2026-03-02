@@ -7,8 +7,18 @@ if [ -f /data/options.json ]; then
     level=$(grep -o '"log_level"\s*:\s*"[^"]*"' /data/options.json | sed 's/.*"\([^"]*\)"$/\1/')
     [ -n "$level" ] && LOG_LEVEL="$level"
 fi
-VERSION="0.8.0"
-echo "[INFO] Sendspin USB Players v${VERSION} starting (log_level=${LOG_LEVEL})"
+STATIC_DELAY=""
+if [ -f /data/options.json ]; then
+    delay=$(grep -o '"static_delay_ms"\s*:\s*[0-9.eE\-]*' /data/options.json | grep -o '[0-9.eE\-]*$')
+    [ -n "$delay" ] && [ "$delay" != "0" ] && STATIC_DELAY="$delay"
+fi
+AUDIO_FORMAT=""
+if [ -f /data/options.json ]; then
+    fmt=$(grep -o '"audio_format"\s*:\s*"[^"]*"' /data/options.json | sed 's/.*"\([^"]*\)"$/\1/')
+    [ -n "$fmt" ] && AUDIO_FORMAT="$fmt"
+fi
+VERSION="0.9.0"
+echo "[INFO] Sendspin USB Players v${VERSION} starting (log_level=${LOG_LEVEL}, static_delay_ms=${STATIC_DELAY:-0}, audio_format=${AUDIO_FORMAT:-auto})"
 
 # --- Signal handling ---
 PIDS=""
@@ -63,7 +73,9 @@ while IFS= read -r sink_name; do
         --name "$sink_desc" \
         --audio-device "$sink_name" \
         --id "$card_id" \
-        --log-level "$LOG_LEVEL" &
+        --log-level "$LOG_LEVEL" \
+        ${STATIC_DELAY:+--static-delay-ms "$STATIC_DELAY"} \
+        ${AUDIO_FORMAT:+--audio-format "$AUDIO_FORMAT"} &
     PIDS="$PIDS $!"
     CARD_COUNT=$((CARD_COUNT + 1))
 
