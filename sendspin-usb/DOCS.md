@@ -4,7 +4,9 @@
 
 ### log_level
 
-Detailgrad der Log-Ausgabe. Standard: `INFO`. Auf `DEBUG` setzen um Sync-Timing und Clock-Drift zu sehen.
+Detailgrad der Log-Ausgabe. Standard: `INFO`.
+
+> **Wichtig:** `DEBUG` im Dauerbetrieb vermeiden. Das Add-on loggt bei DEBUG-Level ~23 Zeilen pro Sekunde, was Python's asyncio Event-Loop kurzzeitig blockieren kann und den Sync-Loop begünstigt. `DEBUG` nur kurz zur Fehleranalyse aktivieren, danach auf `INFO` zurücksetzen.
 
 ### static_delay_ms
 
