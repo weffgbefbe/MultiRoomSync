@@ -17,7 +17,7 @@ if [ -f /data/options.json ]; then
     fmt=$(grep -o '"audio_format"\s*:\s*"[^"]*"' /data/options.json | sed 's/.*"\([^"]*\)"$/\1/')
     [ -n "$fmt" ] && AUDIO_FORMAT="$fmt"
 fi
-VERSION="0.10.2"
+VERSION="0.10.3"
 echo "[INFO] Sendspin USB Players v${VERSION} starting (log_level=${LOG_LEVEL}, static_delay_ms=${STATIC_DELAY:-0}, audio_format=${AUDIO_FORMAT:-auto})"
 
 # --- Signal handling ---
@@ -56,6 +56,23 @@ if pactl unload-module module-suspend-on-idle 2>/dev/null; then
 else
     echo "[INFO] module-suspend-on-idle not loaded or could not be unloaded (benign)."
 fi
+
+# Flush accumulated clock drift from PulseAudio's hardware buffer.
+# After hours of idle, the USB audio clock's ~100ppm drift causes PA to write
+# ahead by 1+ seconds of silence. suspend(1) closes the ALSA device and flushes
+# that buffer; resume(0) reopens it clean, restoring the configured ~100ms latency.
+# Without this flush, sendspin sees a ~1.2s sync error on its first audio write
+# and enters the re-anchor loop.
+echo "[INFO] Flushing PulseAudio sink buffers..."
+pactl list sinks short 2>/dev/null | awk '{print $2}' > /tmp/flush-sinks.txt
+while IFS= read -r s; do
+    [ -z "$s" ] && continue
+    pactl suspend-sink "$s" 1 2>/dev/null || true
+    pactl suspend-sink "$s" 0 2>/dev/null || true
+    echo "[INFO] Flushed sink: $s"
+done < /tmp/flush-sinks.txt
+rm -f /tmp/flush-sinks.txt
+sleep 2
 
 # --- Debug output ---
 echo "[DEBUG] PulseAudio sinks:"
