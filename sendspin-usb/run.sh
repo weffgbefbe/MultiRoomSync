@@ -17,7 +17,7 @@ if [ -f /data/options.json ]; then
     fmt=$(grep -o '"audio_format"\s*:\s*"[^"]*"' /data/options.json | sed 's/.*"\([^"]*\)"$/\1/')
     [ -n "$fmt" ] && AUDIO_FORMAT="$fmt"
 fi
-VERSION="0.10.0"
+VERSION="0.10.1"
 echo "[INFO] Sendspin USB Players v${VERSION} starting (log_level=${LOG_LEVEL}, static_delay_ms=${STATIC_DELAY:-0}, audio_format=${AUDIO_FORMAT:-auto})"
 
 # --- Signal handling ---
@@ -163,6 +163,19 @@ if pactl unload-module module-suspend-on-idle 2>/dev/null; then
 else
     echo "[INFO] module-suspend-on-idle not loaded or could not be unloaded (benign)."
 fi
+
+# Resume any already-suspended sinks so their hardware clocks are running before daemons start.
+# module-suspend-on-idle suspends sinks within ~5s of the last client disconnecting, so the sink
+# is typically IDLE even after a brief add-on restart — causing sendspin's sync error to accumulate.
+pactl list sinks short 2>/dev/null | awk '{print $2}' > /tmp/resume-sinks.txt
+while IFS= read -r s; do
+    [ -z "$s" ] && continue
+    if pactl suspend-sink "$s" 0 2>/dev/null; then
+        echo "[INFO] Resumed sink: $s"
+    fi
+done < /tmp/resume-sinks.txt
+rm -f /tmp/resume-sinks.txt
+sleep 1
 
 # --- Debug output ---
 echo "[DEBUG] PulseAudio sinks:"
