@@ -17,7 +17,7 @@ if [ -f /data/options.json ]; then
     fmt=$(grep -o '"audio_format"\s*:\s*"[^"]*"' /data/options.json | sed 's/.*"\([^"]*\)"$/\1/')
     [ -n "$fmt" ] && AUDIO_FORMAT="$fmt"
 fi
-VERSION="0.10.6"
+VERSION="0.10.7"
 SENDSPIN_VERSION=$(pip show sendspin 2>/dev/null | grep ^Version | awk '{print $2}')
 echo "[INFO] Sendspin USB Players v${VERSION} starting (log_level=${LOG_LEVEL}, static_delay_ms=${STATIC_DELAY:-0}, audio_format=${AUDIO_FORMAT:-auto}, sendspin=${SENDSPIN_VERSION:-unknown})"
 

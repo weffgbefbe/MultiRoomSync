@@ -15,7 +15,7 @@ RUN apk add --no-cache --virtual .build-deps \
     && apk del .build-deps
 
 RUN apk add --no-cache alsa-lib alsa-utils pulseaudio-utils python3 py3-pip \
-    && pip install --no-cache-dir --break-system-packages sendspin
+    && pip install --no-cache-dir --break-system-packages "sendspin>=7.3.0"
 
 COPY run.sh /run.sh
 RUN chmod +x /run.sh
