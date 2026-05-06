@@ -17,15 +17,15 @@ if [ -f /data/options.json ]; then
     fmt=$(grep -o '"audio_format"\s*:\s*"[^"]*"' /data/options.json | sed 's/.*"\([^"]*\)"$/\1/')
     [ -n "$fmt" ] && AUDIO_FORMAT="$fmt"
 fi
-VERSION="0.10.5"
-echo "[INFO] Sendspin USB Players v${VERSION} starting (log_level=${LOG_LEVEL}, static_delay_ms=${STATIC_DELAY:-0}, audio_format=${AUDIO_FORMAT:-auto})"
+VERSION="0.10.6"
+SENDSPIN_VERSION=$(pip show sendspin 2>/dev/null | grep ^Version | awk '{print $2}')
+echo "[INFO] Sendspin USB Players v${VERSION} starting (log_level=${LOG_LEVEL}, static_delay_ms=${STATIC_DELAY:-0}, audio_format=${AUDIO_FORMAT:-auto}, sendspin=${SENDSPIN_VERSION:-unknown})"
 
 # --- Signal handling ---
 PIDS=""
-WARMUP_PIDS=""
 cleanup() {
     echo "[INFO] Shutting down sendspin daemons..."
-    for pid in $PIDS $WARMUP_PIDS; do
+    for pid in $PIDS; do
         kill "$pid" 2>/dev/null || true
     done
     wait
@@ -126,22 +126,6 @@ else
     rm -f /tmp/flush-sinks.txt
     sleep 1
 fi
-
-# Keep each sink RUNNING with a silent audio stream so the hardware clock is
-# already active when sendspin opens its PortAudio stream. Without this, the
-# IDLE→RUNNING transition takes 500-1700ms during which Music Assistant's clock
-# advances, creating a sync error that triggers the re-anchor loop.
-echo "[INFO] Starting audio warmup (keeps sink clock active)..."
-pactl list sinks short 2>/dev/null | awk '{print $2}' > /tmp/warmup-sinks.txt
-while IFS= read -r s; do
-    [ -z "$s" ] && continue
-    pacat --playback --rate=48000 --channels=2 --format=s16le \
-          --device="$s" < /dev/zero > /dev/null 2>&1 &
-    WARMUP_PIDS="$WARMUP_PIDS $!"
-    echo "[INFO] Warmup active for: $s (pid=$!)"
-done < /tmp/warmup-sinks.txt
-rm -f /tmp/warmup-sinks.txt
-sleep 1
 
 # --- Debug output ---
 echo "[DEBUG] PulseAudio sinks:"
