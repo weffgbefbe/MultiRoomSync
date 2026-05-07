@@ -33,11 +33,26 @@ MA 2.8.x nutzt `aiosendspin 4.2.0` server-seitig → **trotzdem kompatibel** (be
 
 `sendspin>=7.3.0` ist der korrekte Pin — enthält Fix für "unwanted catch-up when joining mid-stream playback".
 
-## static_delay_ms
+## static_delay_ms — KRITISCH
 
-- Vor sendspin 7.0: manuell groß-negativ setzen (z.B. `-390.5`) um Hardware-Latenz zu kompensieren
-- Ab sendspin 7.0+: Auto-Kompensation eingebaut → Wert auf `0` oder kleinen positiven Wert setzen
-- Empfehlung: `0` als Startpunkt, dann in ±25ms-Schritten für Multi-Room-Sync tunen
+**Definitive Erkenntnis (v0.10.8-Log-Analyse):**
+
+`static_delay_ms=-390.5` + sendspin 7.3.0 DAC-anchored sync = Audio-Fetzen.
+
+Beweis aus Log:
+```
+INFO:sendspin.audio:Audio stream configured: output_latency=0.0 ms
+DEBUG:sendspin.audio:Sync error: 6.7 ms, buffer: 0.00 s, speed: 120.48%, dropped: 9832
+```
+
+`output_latency=0.0ms` bedeutet: sendspin hat Hardware-Latenz gemessen und kompensiert (DAC-anchored).
+Zusätzliches `-390.5ms` bewirkt Doppelkompensation → sendspin kann Timestamps nicht erfüllen → 115–120% Speed → ~9000 Samples/Callback gedroppt → Fetzen.
+
+**Regel:** 
+- sendspin 7.x verspricht Auto-Kompensation, aber über PulseAudio (HAOS) meldet PortAudio `output_latency=0.0ms` → Auto-Kompensation schlägt fehl
+- Deshalb: manueller Wert (z.B. `-390`) bleibt nötig — wie vor 7.0
+- Fetzen entstehen NICHT direkt durch `-390ms`, sondern durch den Reanchor-Nacheffekt: Speed-Controller überschwingt nach Reanchor mit großem negativem Ziel
+- Reanchor triggert wenn MA > ~500ms spielt bevor sendspin verbindet → Workaround: MA stoppen, Add-on neustarten, dann MA starten
 
 ## Re-Anchor-Loop (bekannter Bug)
 
@@ -59,7 +74,7 @@ MA 2.8.x nutzt `aiosendspin 4.2.0` server-seitig → **trotzdem kompatibel** (be
 | FIFO-basierter Watchdog (daemon_wrapper) | FIFO-Backpressure blockiert asyncio Event-Loop für bis zu 16s → verschlimmert Sync-Fehler massiv |
 | `pactl suspend-sink 1 + suspend-sink 0` (Buffer-Flush) | Hilft gegen akkumulierte PA-Latenz (1.23s → ~0), aber nicht gegen MA-Stream-Timing |
 
-## Was funktioniert (aktueller Stand v0.10.7)
+## Was funktioniert (aktueller Stand v0.10.8)
 
 - `wait_for_pulseaudio()` → wartet auf PA
 - `pactl unload-module module-suspend-on-idle` → verhindert zukünftige Suspensions

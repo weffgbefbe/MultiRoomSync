@@ -17,7 +17,7 @@ if [ -f /data/options.json ]; then
     fmt=$(grep -o '"audio_format"\s*:\s*"[^"]*"' /data/options.json | sed 's/.*"\([^"]*\)"$/\1/')
     [ -n "$fmt" ] && AUDIO_FORMAT="$fmt"
 fi
-VERSION="0.10.8"
+VERSION="0.10.9"
 SENDSPIN_VERSION=$(pip show sendspin 2>/dev/null | grep ^Version | awk '{print $2}')
 echo "[INFO] Sendspin USB Players v${VERSION} starting (log_level=${LOG_LEVEL}, static_delay_ms=${STATIC_DELAY:-0}, audio_format=${AUDIO_FORMAT:-auto}, sendspin=${SENDSPIN_VERSION:-unknown})"
 
@@ -57,6 +57,47 @@ if pactl unload-module module-suspend-on-idle 2>/dev/null; then
 else
     echo "[INFO] module-suspend-on-idle not loaded or could not be unloaded (benign)."
 fi
+
+# --- USB audio device reset via USBDEVFS_RESET ioctl ---
+# Simulates physical replug: resets device firmware state + triggers PA re-enumeration.
+# Requires /dev/bus/usb/ access (full_access: true). Falls back gracefully if unavailable.
+echo "[DEBUG] /dev/bus/usb contents:"
+ls /dev/bus/usb/ 2>&1 || echo "[DEBUG] /dev/bus/usb not accessible"
+python3 - <<'PYEOF' || true
+import os, glob, fcntl, re, time
+USBDEVFS_RESET = 0x5514
+seen = set()
+reset_count = 0
+for iface in sorted(glob.glob('/sys/bus/usb/devices/*:*')):
+    try:
+        cls = open(os.path.join(iface, 'bInterfaceClass')).read().strip()
+        if cls != '01':
+            continue
+        dev_name = re.sub(r':\d+\.\d+$', '', os.path.basename(iface))
+        if dev_name in seen:
+            continue
+        seen.add(dev_name)
+        dev_dir = '/sys/bus/usb/devices/' + dev_name
+        bus = int(open(dev_dir + '/busnum').read())
+        dev = int(open(dev_dir + '/devnum').read())
+        path = f'/dev/bus/usb/{bus:03d}/{dev:03d}'
+        print(f'[DEBUG] USB audio device: {dev_name} -> {path}', flush=True)
+        if not os.path.exists(path):
+            print(f'[INFO] {path} not accessible in container', flush=True)
+            continue
+        fd = os.open(path, os.O_WRONLY)
+        fcntl.ioctl(fd, USBDEVFS_RESET, 0)
+        os.close(fd)
+        print(f'[INFO] USB reset sent: {dev_name} ({path})', flush=True)
+        reset_count += 1
+    except Exception as e:
+        print(f'[DEBUG] USB reset: {e}', flush=True)
+if reset_count > 0:
+    print(f'[INFO] Reset {reset_count} USB audio device(s), waiting 3s for PA re-detection...', flush=True)
+    time.sleep(3)
+else:
+    print('[INFO] No USB audio devices were reset (no access or none found)', flush=True)
+PYEOF
 
 # Flush PA hardware buffer (suspend+resume) to clear accumulated clock drift.
 echo "[INFO] Flushing PulseAudio sink buffers..."
