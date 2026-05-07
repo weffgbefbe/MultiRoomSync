@@ -18,69 +18,43 @@ Erste Log-Zeile zeigt immer: `[INFO] Sendspin USB Players vX.Y.Z starting`
 
 - **`/proc/asound/` existiert nicht** in HAOS-Containern → kein ALSA-Device-Listing
 - **`/etc` ist read-only** → Configs nach `/tmp` schreiben
-- **`/sys` ist read-only** → USB-Reset via sysfs funktioniert NICHT
+- **`/sys` ist read-only** → USB-Reset via sysfs funktioniert NICHT (auch mit `full_access: true`)
 - **PortAudio muss from source gebaut werden** — Alpine hat kein Paket mit PulseAudio-Backend
 - `ALSA_CONFIG_PATH` NICHT setzen — überschreibt HAOS PulseAudio-Redirect
-- `audio: true` mountet PA-Socket, `full_access: true` aber sysfs bleibt read-only
 
-## sendspin Pakete (wichtig zu verstehen)
+## sendspin Versionen — KRITISCH beim Upgrade
 
-Zwei separate PyPI-Pakete:
-- `sendspin` — der Client-Daemon (was wir installieren), aktuell `>=7.3.0`
-- `aiosendspin` — geteilte Protokoll-Bibliothek; `sendspin 7.3.0` braucht `aiosendspin ~= 5.2`
+**Aktuell: `sendspin<7.0.0`** (Dockerfile-Pin)
 
-MA 2.8.x nutzt `aiosendspin 4.2.0` server-seitig → **trotzdem kompatibel** (beide sprechen Wire-Protokoll "version 1", bewiesen durch Handshake-Logs).
+sendspin 7.0 führte "DAC-anchored sync" ein — einen grundlegend anderen Sync-Algorithmus. Bestätigt durch Test (Mai 2026):
+- `sendspin<7.0.0` + bestehender `static_delay_ms`-Wert → Sync korrekt ✓
+- `sendspin 7.3.0` + gleicher `static_delay_ms`-Wert → Sync falsch ✗
 
-`sendspin>=7.3.0` ist der korrekte Pin — enthält Fix für "unwanted catch-up when joining mid-stream playback".
+**Bei Upgrade auf sendspin 7.x:** `static_delay_ms` muss komplett neu kalibriert werden (von 0 ausgehend, nach Gehör). Der alte Wert ist nicht übertragbar.
 
-## static_delay_ms — KRITISCH
+Wire-Protokoll: sendspin 7.3.0 ist mit MA 2.8.6 kompatibel (Protokoll "version 1" — durch Handshake-Logs bestätigt). Nur die Sync-Kalibrierung ist inkompatibel.
 
-**Definitive Erkenntnis (v0.10.8-Log-Analyse):**
+## static_delay_ms
 
-`static_delay_ms=-390.5` + sendspin 7.3.0 DAC-anchored sync = Audio-Fetzen.
+- Akustischer Pfad (DAC → Verstärker → Lautsprecher) ist nie automatisch messbar
+- Kalibrierung ausschließlich durch Hören — kein Software-Tool ersetzt das
+- 1–2ms Timing-Jitter im Betrieb ist die architektonische Untergrenze (USB-DAC-Takt vs. Netzwerktakt) — nicht reduzierbar von unserer Seite, nicht weiter relevant
 
-Beweis aus Log:
-```
-INFO:sendspin.audio:Audio stream configured: output_latency=0.0 ms
-DEBUG:sendspin.audio:Sync error: 6.7 ms, buffer: 0.00 s, speed: 120.48%, dropped: 9832
-```
+## Bekannte offene Probleme
 
-`output_latency=0.0ms` bedeutet: sendspin hat Hardware-Latenz gemessen und kompensiert (DAC-anchored).
-Zusätzliches `-390.5ms` bewirkt Doppelkompensation → sendspin kann Timestamps nicht erfüllen → 115–120% Speed → ~9000 Samples/Callback gedroppt → Fetzen.
+**Physisches USB-Replug** ist der einzige bekannte Fix wenn der DAC nach langem Betrieb in einen schlechten Hardware-Zustand gerät. Software-Simulation bisher nicht gelungen:
+- `pactl suspend-sink 1+0`: setzt nur PA-Software-Buffer zurück — unzureichend
+- sysfs unbind/bind: read-only in HAOS — unmöglich
+- `USBDEVFS_RESET` ioctl via `/dev/bus/usb/`: Code in v0.10.9 vorhanden, aber in HAOS noch ungetestet
 
-**Regel:** 
-- sendspin 7.x verspricht Auto-Kompensation, aber über PulseAudio (HAOS) meldet PortAudio `output_latency=0.0ms` → Auto-Kompensation schlägt fehl
-- Deshalb: manueller Wert (z.B. `-390`) bleibt nötig — wie vor 7.0
-- Fetzen entstehen NICHT direkt durch `-390ms`, sondern durch den Reanchor-Nacheffekt: Speed-Controller überschwingt nach Reanchor mit großem negativem Ziel
-- Reanchor triggert wenn MA > ~500ms spielt bevor sendspin verbindet → Workaround: MA stoppen, Add-on neustarten, dann MA starten
-
-## Re-Anchor-Loop (bekannter Bug)
-
-**Ursache:** sendspin's Re-Anchor-Algorithmus resettet den Stream-Offset aber nicht die interne Zeitreferenz → gleicher Fehler sofort wieder → Endlosschleife.
-
-**Trigger:** Sync-Fehler > Threshold (~500ms) beim ersten Audio-Chunk nach Verbindungsaufbau. Dieser Fehler entspricht: Zeit die MA seit Beginn des aktuellen Streams gespielt hat.
-
-**Workaround:** Add-on in HAOS neustarten. Wird besser wenn MA gleichzeitig neustartet (gemeinsame Zeitbasis).
-
-**Upstream-Fix:** `sendspin 7.3.0` behebt "unwanted catch-up when joining mid-stream" — hilft bei kleinen Offsets. Sehr große Offsets (>10s, nach langem Daemon-Crash) können weiterhin initial einen kurzen Loop verursachen, erholen sich aber.
-
-## Dinge die wir versucht haben (und warum sie nicht funktionieren)
+## Was nicht funktioniert (getestet)
 
 | Ansatz | Ergebnis |
 |---|---|
-| `pactl suspend-sink 0` auf IDLE-Sink | No-op — IDLE ≠ SUSPENDED |
-| USB-Reset via `/sys/bus/usb/.../authorized` | Read-only filesystem in HAOS |
-| `pacat < /dev/zero` Warmup (parallel zum Daemon) | Zwei Clients auf gleicher PA-Sink erhöhen Latenz von ~562ms auf ~1557ms — macht es schlechter |
-| FIFO-basierter Watchdog (daemon_wrapper) | FIFO-Backpressure blockiert asyncio Event-Loop für bis zu 16s → verschlimmert Sync-Fehler massiv |
-| `pactl suspend-sink 1 + suspend-sink 0` (Buffer-Flush) | Hilft gegen akkumulierte PA-Latenz (1.23s → ~0), aber nicht gegen MA-Stream-Timing |
-
-## Was funktioniert (aktueller Stand v0.10.8)
-
-- `wait_for_pulseaudio()` → wartet auf PA
-- `pactl unload-module module-suspend-on-idle` → verhindert zukünftige Suspensions
-- USB-Reset-Versuch (schlägt fehl, macht nichts)
-- PA-Flush (suspend 1 + 0) als Fallback → räumt akkumulierten PA-Puffer auf
-- Direkter `sendspin daemon ... &` (kein Wrapper, kein FIFO)
+| USB-Reset via `/sys/bus/usb/.../authorized` | Read-only in HAOS — scheitert lautlos |
+| `pacat < /dev/zero` Warmup parallel zum Daemon | PA-Latenz steigt von ~562ms auf ~1557ms |
+| FIFO-basierter Watchdog (daemon_wrapper) | Blockiert asyncio Event-Loop bis zu 16s |
+| `pactl suspend-sink 1 + 0` als Buffer-Flush | Nur PA-Software-Layer, nicht USB-Hardware-State |
 
 ## Push
 
@@ -88,4 +62,4 @@ Geht nicht aus der Claude-Shell — User muss selbst pushen:
 ```bash
 cd ~/Schreibtisch/Projekte/MultiRoomSync && git push
 ```
-Nach Push: HAOS Add-on Store → **Neu-Installieren** (nicht nur Update) wenn Dockerfile geändert wurde.
+Nach Push: HAOS Add-on Store → **Neu-Installieren** wenn Dockerfile geändert wurde.
