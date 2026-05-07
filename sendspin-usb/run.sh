@@ -18,9 +18,9 @@ if [ -f /data/options.json ]; then
     [ -n "$fmt" ] && AUDIO_FORMAT="$fmt"
 fi
 VERSION="0.10.10"
-# Ensure sendspin's pulsectl-asyncio can find the HAOS PulseAudio socket.
-# Without this, pulsectl looks at the wrong default path → PA "not reachable" →
-# output_latency=0.0ms measured → DAC-anchored sync has no correct reference.
+# Ensure sendspin's pulsectl-asyncio finds the HAOS PulseAudio socket.
+# Without this, pulsectl looks at the wrong default path → volume control unavailable
+# and PA software buffer depth not readable (output_latency stays 0ms).
 export PULSE_SERVER="unix:/run/audio/pulse.sock"
 SENDSPIN_VERSION=$(pip show sendspin 2>/dev/null | grep ^Version | awk '{print $2}')
 echo "[INFO] Sendspin USB Players v${VERSION} starting (log_level=${LOG_LEVEL}, static_delay_ms=${STATIC_DELAY:-0}, audio_format=${AUDIO_FORMAT:-auto}, sendspin=${SENDSPIN_VERSION:-unknown})"
