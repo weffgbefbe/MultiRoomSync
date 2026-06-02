@@ -60,6 +60,7 @@ Wire-Protokoll: sendspin 7.3.x ist mit MA 2.8.8 kompatibel (Protokoll "version 1
 - Akustischer Pfad (DAC → Verstärker → Lautsprecher) ist nie automatisch messbar
 - Jedes Setup hat andere Hardware (DAC-Modell, Verstärker, Lautsprecher, Raumakustik) → der Delay ist immer individuell
 - Kalibrierung ausschließlich durch Hören — kein Software-Tool ersetzt das, kein Log-Wert gibt den echten Delay an
+- Aktueller Wert (v1.0.0, sendspin 7.x): **313ms** (vorläufig, ggf. noch minimal anpassen)
 - 1–2ms Timing-Jitter im Betrieb ist die architektonische Untergrenze (USB-DAC-Takt vs. Netzwerktakt) — nicht reduzierbar von unserer Seite, nicht weiter relevant
 
 ## Bekannte offene Probleme
