@@ -17,7 +17,7 @@ if [ -f /data/options.json ]; then
     fmt=$(grep -o '"audio_format"\s*:\s*"[^"]*"' /data/options.json | sed 's/.*"\([^"]*\)"$/\1/')
     [ -n "$fmt" ] && AUDIO_FORMAT="$fmt"
 fi
-VERSION="1.0.2"
+VERSION="1.0.3"
 # sendspin 7.x (DAC-anchored sync) needs pulsectl-asyncio to reach the HAOS PA socket.
 # Without this, output_latency=0.0ms → DAC timing reference broken → silent playback.
 export PULSE_SERVER="unix:/run/audio/pulse.sock"
@@ -70,6 +70,11 @@ while IFS= read -r s; do
     echo "[INFO] Flushed sink: $s"
 done < /tmp/flush-sinks.txt
 rm -f /tmp/flush-sinks.txt
+sleep 1
+
+# Clear stale sendspin settings (persisted between restarts, may contain player_muted:true
+# or wrong device state from a previous broken run).
+rm -f /root/.config/sendspin/settings-daemon.json
 
 # --- Debug output ---
 echo "[DEBUG] PulseAudio sinks:"
@@ -106,8 +111,9 @@ while IFS= read -r sink_name; do
 
     echo "[INFO] Starting daemon: ${sink_desc} (device=${sink_name}, id=${card_id})"
 
-    # Pass PulseAudio sink name as audio-device (matches sendspin device name exactly)
-    sendspin daemon \
+    # PULSE_SINK ensures PortAudio's PulseAudio backend routes this daemon's audio
+    # to the correct sink even when using the default PortAudio device selector.
+    PULSE_SINK="$sink_name" sendspin daemon \
         --name "$sink_desc" \
         --audio-device "$sink_name" \
         --id "$card_id" \
