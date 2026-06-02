@@ -17,7 +17,7 @@ if [ -f /data/options.json ]; then
     fmt=$(grep -o '"audio_format"\s*:\s*"[^"]*"' /data/options.json | sed 's/.*"\([^"]*\)"$/\1/')
     [ -n "$fmt" ] && AUDIO_FORMAT="$fmt"
 fi
-VERSION="1.0.0"
+VERSION="1.0.1"
 # sendspin 7.x (DAC-anchored sync) needs pulsectl-asyncio to reach the HAOS PA socket.
 # Without this, output_latency=0.0ms → DAC timing reference broken → silent playback.
 export PULSE_SERVER="unix:/run/audio/pulse.sock"
