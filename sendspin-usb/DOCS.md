@@ -19,11 +19,11 @@ Der Wert wird ausschließlich durch Hören kalibriert — eine automatische Mess
 1. Spiele Musik auf zwei oder mehr Playern gleichzeitig ab
 2. Höre genau hin, welcher Player voraus oder hinterher ist
 3. Passe den Wert in 25ms-Schritten an:
-   - Player spielt **zu spät** → negativer Wert (z.B. `-390`)
-   - Player spielt **zu früh** → positiver Wert (z.B. `25`)
+   - Player spielt **zu spät** → positiver Wert (z.B. `390`)
+   - Player spielt **zu früh** → negativer Wert (z.B. `-25`)
 4. Speichern, Add-on neustarten, erneut testen
 
-> **Hinweis bei sendspin-Upgrade:** Bei einem Upgrade auf sendspin 7.x ändert sich der Sync-Algorithmus grundlegend. Der bestehende Wert ist dann nicht mehr gültig und muss neu kalibriert werden.
+> **Upgrade von v0.9.x:** sendspin 7.x verwendet einen neuen Sync-Algorithmus (DAC-anchored sync). Das Vorzeichen hat sich umgedreht, und der alte Wert gilt nicht mehr. Bitte `static_delay_ms` auf `0` zurücksetzen und neu kalibrieren.
 
 ### audio_format
 

@@ -17,7 +17,7 @@ if [ -f /data/options.json ]; then
     fmt=$(grep -o '"audio_format"\s*:\s*"[^"]*"' /data/options.json | sed 's/.*"\([^"]*\)"$/\1/')
     [ -n "$fmt" ] && AUDIO_FORMAT="$fmt"
 fi
-VERSION="0.9.0"
+VERSION="1.0.0"
 echo "[INFO] Sendspin USB Players v${VERSION} starting (log_level=${LOG_LEVEL}, static_delay_ms=${STATIC_DELAY:-0}, audio_format=${AUDIO_FORMAT:-auto})"
 
 # --- Signal handling ---
@@ -37,7 +37,7 @@ trap cleanup SIGTERM SIGINT
 echo "[DEBUG] PulseAudio sinks:"
 pactl list sinks short 2>&1 || echo "[DEBUG] pactl failed"
 echo "[DEBUG] sendspin devices:"
-sendspin --list-audio-devices 2>&1 || echo "[DEBUG] sendspin list failed"
+sendspin audio-devices list 2>&1 || echo "[DEBUG] sendspin list failed"
 echo "[DEBUG] ---"
 
 # --- Enumerate PulseAudio output sinks ---
