@@ -18,7 +18,11 @@ if [ -f /data/options.json ]; then
     [ -n "$fmt" ] && AUDIO_FORMAT="$fmt"
 fi
 VERSION="1.0.0"
-echo "[INFO] Sendspin USB Players v${VERSION} starting (log_level=${LOG_LEVEL}, static_delay_ms=${STATIC_DELAY:-0}, audio_format=${AUDIO_FORMAT:-auto})"
+# sendspin 7.x (DAC-anchored sync) needs pulsectl-asyncio to reach the HAOS PA socket.
+# Without this, output_latency=0.0ms → DAC timing reference broken → silent playback.
+export PULSE_SERVER="unix:/run/audio/pulse.sock"
+SENDSPIN_VERSION=$(pip show sendspin 2>/dev/null | grep ^Version | awk '{print $2}')
+echo "[INFO] Sendspin USB Players v${VERSION} starting (log_level=${LOG_LEVEL}, static_delay_ms=${STATIC_DELAY:-0}, audio_format=${AUDIO_FORMAT:-auto}, sendspin=${SENDSPIN_VERSION:-unknown})"
 
 # --- Signal handling ---
 PIDS=""
