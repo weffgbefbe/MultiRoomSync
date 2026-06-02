@@ -8,11 +8,32 @@ Stack: Alpine Linux Container → PortAudio (from source) → PulseAudio (HAOS h
 
 ## Versionierung
 
-Beim Bump immer **beide** Dateien anpassen:
+**Schema: Semantic Versioning (semver) — MAJOR.MINOR.PATCH**
+
+| Typ | Wann | Beispiel |
+|---|---|---|
+| MAJOR | Nutzer muss manuell eingreifen (Neu-Kalibrierung, Neu-Installation) | sendspin 7.x Upgrade |
+| MINOR | Neue Funktion, rückwärtskompatibel | Neues Config-Feld |
+| PATCH | Bugfix ohne Nutzeraktion nötig | PULSE_SERVER-Fix |
+
+**Regel: Jeder Commit mit Funktionsänderung bekommt einen Versionsbump — keine Ausnahme.**
+Der Versionsbump gehört in denselben Commit wie die Änderung selbst, nie nachträglich.
+HAOS erkennt Updates **ausschließlich** über die Versionsnummer in `config.yaml`.
+
+Beim Bump immer **beide** Dateien gleichzeitig anpassen:
 - `sendspin-usb/config.yaml` → `version: "X.Y.Z"`
 - `sendspin-usb/run.sh` → `VERSION="X.Y.Z"`
 
 Erste Log-Zeile zeigt immer: `[INFO] Sendspin USB Players vX.Y.Z starting`
+
+## Git-Workflow
+
+Claude erledigt: `git add`, `git commit`
+User erledigt nur: `git push`
+
+Nach Push:
+- **Update** reicht wenn nur `run.sh`/`DOCS.md`/`config.yaml` geändert
+- **Neu-Installieren** wenn `Dockerfile` geändert wurde
 
 ## HAOS-spezifische Fallen
 
@@ -24,15 +45,15 @@ Erste Log-Zeile zeigt immer: `[INFO] Sendspin USB Players vX.Y.Z starting`
 
 ## sendspin Versionen — KRITISCH beim Upgrade
 
-**Aktuell: `sendspin<7.0.0`** (Dockerfile-Pin)
+**Aktuell: `sendspin~=7.3`** (Dockerfile-Pin, seit v1.0.0)
 
-sendspin 7.0 führte "DAC-anchored sync" ein — einen grundlegend anderen Sync-Algorithmus. Bestätigt durch Test (Mai 2026):
-- `sendspin<7.0.0` + bestehender `static_delay_ms`-Wert → Sync korrekt ✓
-- `sendspin 7.3.0` + gleicher `static_delay_ms`-Wert → Sync falsch ✗
+sendspin 7.0 führte "DAC-anchored sync" ein — einen grundlegend anderen Sync-Algorithmus:
+- `static_delay_ms` Vorzeichen umgedreht: Player zu spät → **positiver** Wert (in 6.x war es negativ)
+- `PULSE_SERVER="unix:/run/audio/pulse.sock"` muss gesetzt sein — damit pulsectl-asyncio den HAOS-PA-Socket findet (Hardware-Volume-Check)
+- `sendspin --list-audio-devices` heißt jetzt `sendspin audio-devices list`
+- `output_latency=0.0ms` im Log ist **normal** mit PortAudio+PulseAudio — kein Fehler, kein Fix nötig
 
-**Bei Upgrade auf sendspin 7.x:** `static_delay_ms` muss komplett neu kalibriert werden (von 0 ausgehend, nach Gehör). Der alte Wert ist nicht übertragbar.
-
-Wire-Protokoll: sendspin 7.3.0 ist mit MA 2.8.6 kompatibel (Protokoll "version 1" — durch Handshake-Logs bestätigt). Nur die Sync-Kalibrierung ist inkompatibel.
+Wire-Protokoll: sendspin 7.3.x ist mit MA 2.8.8 kompatibel (Protokoll "version 1"). Nur die Sync-Kalibrierung ist inkompatibel zu 6.x-Werten.
 
 ## static_delay_ms
 
@@ -48,6 +69,22 @@ Wire-Protokoll: sendspin 7.3.0 ist mit MA 2.8.6 kompatibel (Protokoll "version 1
 - sysfs unbind/bind: read-only in HAOS — unmöglich
 - `USBDEVFS_RESET` ioctl via `/dev/bus/usb/`: Code in v0.10.9 vorhanden, aber in HAOS noch ungetestet
 
+## PA Hardware-Volume — KRITISCH
+
+sendspin's Hardware-Volume-Matching schlägt auf diesem Gerät fehl (`no sink matched device`-Warning im Log). Dadurch kann sendspin die PA-Sink-Lautstärke nie selbst korrigieren.
+
+**Ursache für stilles Audio:** PA-Sink-Lautstärke war 9% (-62.75 dB) — durch HAOS/MA irgendwann gesetzt, nie zurückgesetzt.
+
+**Fix in run.sh (v0.9.2+):** Vor jedem Daemon-Start:
+```sh
+pactl set-sink-volume "$sink_name" 100%
+pactl set-sink-mute "$sink_name" 0
+```
+
+**Prüfung:** `PULSE_SERVER=unix:/run/audio/pulse.sock pactl get-sink-volume 0`
+
+Diese beiden Zeilen sind zwingend — ohne sie kann HAOS/MA die Hardware-Lautstärke jederzeit auf 0 setzen und das Add-on bleibt still, obwohl sendspin korrekt spielt (RUNNING im Log).
+
 ## Was nicht funktioniert (getestet)
 
 | Ansatz | Ergebnis |
@@ -59,8 +96,7 @@ Wire-Protokoll: sendspin 7.3.0 ist mit MA 2.8.6 kompatibel (Protokoll "version 1
 
 ## Push
 
-Geht nicht aus der Claude-Shell — User muss selbst pushen:
+Geht nicht aus der Claude-Shell — User führt nur aus:
 ```bash
 cd ~/Schreibtisch/Projekte/MultiRoomSync && git push
 ```
-Nach Push: HAOS Add-on Store → **Neu-Installieren** wenn Dockerfile geändert wurde.
