@@ -17,7 +17,7 @@ if [ -f /data/options.json ]; then
     fmt=$(grep -o '"audio_format"\s*:\s*"[^"]*"' /data/options.json | sed 's/.*"\([^"]*\)"$/\1/')
     [ -n "$fmt" ] && AUDIO_FORMAT="$fmt"
 fi
-VERSION="0.9.0"
+VERSION="0.9.2"
 echo "[INFO] Sendspin USB Players v${VERSION} starting (log_level=${LOG_LEVEL}, static_delay_ms=${STATIC_DELAY:-0}, audio_format=${AUDIO_FORMAT:-auto})"
 
 # --- Signal handling ---
@@ -66,6 +66,11 @@ while IFS= read -r sink_name; do
 
     card_id="sendspin-$(echo "$sink_name" | md5sum | cut -c1-8)"
 
+    # Reset PA sink to unity gain. sendspin's hardware volume matching fails on this
+    # device, so it never corrects the PA level. If HAOS/MA sets it to a low value
+    # (e.g. 9%), all audio is inaudible regardless of software volume.
+    pactl set-sink-volume "$sink_name" 100% 2>/dev/null || true
+    pactl set-sink-mute "$sink_name" 0 2>/dev/null || true
     echo "[INFO] Starting daemon: ${sink_desc} (device=${sink_name}, id=${card_id})"
 
     # Pass PulseAudio sink name as audio-device (matches sendspin device name exactly)
