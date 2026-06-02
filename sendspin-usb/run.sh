@@ -17,7 +17,7 @@ if [ -f /data/options.json ]; then
     fmt=$(grep -o '"audio_format"\s*:\s*"[^"]*"' /data/options.json | sed 's/.*"\([^"]*\)"$/\1/')
     [ -n "$fmt" ] && AUDIO_FORMAT="$fmt"
 fi
-VERSION="1.0.1"
+VERSION="1.0.2"
 # sendspin 7.x (DAC-anchored sync) needs pulsectl-asyncio to reach the HAOS PA socket.
 # Without this, output_latency=0.0ms → DAC timing reference broken → silent playback.
 export PULSE_SERVER="unix:/run/audio/pulse.sock"
@@ -36,6 +36,40 @@ cleanup() {
     exit 0
 }
 trap cleanup SIGTERM SIGINT
+
+# --- Wait for PulseAudio ---
+echo "[INFO] Waiting for PulseAudio..."
+retries=0
+while [ "$retries" -lt 30 ]; do
+    if pactl info >/dev/null 2>&1; then
+        echo "[INFO] PulseAudio ready (after ${retries}s)."
+        break
+    fi
+    retries=$((retries + 1))
+    sleep 1
+done
+if [ "$retries" -eq 30 ]; then
+    echo "[ERROR] PulseAudio not available after 30s. Exiting."
+    exit 1
+fi
+
+# Disable suspend-on-idle: sendspin 7.x DAC-anchored sync drops audio if PA
+# wakes a suspended sink mid-stream (timing window missed → silence).
+if pactl unload-module module-suspend-on-idle 2>/dev/null; then
+    echo "[INFO] Disabled PulseAudio module-suspend-on-idle."
+else
+    echo "[INFO] module-suspend-on-idle not loaded (benign)."
+fi
+
+# Flush PA sink buffers to ensure active state before daemons start.
+pactl list sinks short 2>/dev/null | awk '{print $2}' > /tmp/flush-sinks.txt
+while IFS= read -r s; do
+    [ -z "$s" ] && continue
+    pactl suspend-sink "$s" 1 2>/dev/null || true
+    pactl suspend-sink "$s" 0 2>/dev/null || true
+    echo "[INFO] Flushed sink: $s"
+done < /tmp/flush-sinks.txt
+rm -f /tmp/flush-sinks.txt
 
 # --- Debug output ---
 echo "[DEBUG] PulseAudio sinks:"
