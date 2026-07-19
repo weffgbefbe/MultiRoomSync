@@ -53,3 +53,9 @@ WARNING:aiosendspin_mpris.mpris_service:MPRIS not available: DBus address error
 ```
 
 MPRIS braucht einen Session-DBus, den es im HAOS-Add-on-Container (headless, `init: false`) nicht gibt — und MPRIS ist hier ohnehin nutzlos, weil die Steuerung über Music Assistant läuft. Seit **v1.0.1** startet das Add-on jeden Daemon mit `--disable-mpris`; die Warnung entfällt.
+
+### Re-Anchor-Loop nach langer Inaktivität
+
+Nach sehr langer Audio-Pause lief sendspin früher in einen endlosen „Sync error … too large; re-anchoring"-Loop (Stille oder Fetzen). Ursache: PulseAudio suspendierte den Sink bei Inaktivität und stoppte die Device-Clock (Details: `docs/SENDSPIN_REANCHOR_BUG.md`).
+
+Seit **v1.0.1** wird beim Start `module-suspend-on-idle` entladen — das entfernt die Ursache. Ein zusätzlicher Watchdog (Daemon bei wiederholten Re-Anchors automatisch neustarten) wurde bewusst **nicht** eingebaut: Er würde die bewährte, schlanke `run.sh`-Struktur gefährden, und ein früherer FIFO-basierter Watchdog blockierte den asyncio-Event-Loop bis zu 16 s. Sollte der Loop trotz v1.0.1 je wieder auftreten, bleibt der manuelle Fix ein **Add-on-Neustart**.
