@@ -59,3 +59,41 @@ MPRIS braucht einen Session-DBus, den es im HAOS-Add-on-Container (headless, `in
 Nach sehr langer Audio-Pause lief sendspin früher in einen endlosen „Sync error … too large; re-anchoring"-Loop (Stille oder Fetzen). Ursache: PulseAudio suspendierte den Sink bei Inaktivität und stoppte die Device-Clock (Details: `docs/SENDSPIN_REANCHOR_BUG.md`).
 
 Seit **v1.0.1** wird beim Start `module-suspend-on-idle` entladen — das entfernt die Ursache. Ein zusätzlicher Watchdog (Daemon bei wiederholten Re-Anchors automatisch neustarten) wurde bewusst **nicht** eingebaut: Er würde die bewährte, schlanke `run.sh`-Struktur gefährden, und ein früherer FIFO-basierter Watchdog blockierte den asyncio-Event-Loop bis zu 16 s. Sollte der Loop trotz v1.0.1 je wieder auftreten, bleibt der manuelle Fix ein **Add-on-Neustart**.
+
+### Aussetzer / Desync / Stottern (VBAN im Signalweg)
+
+Symptom: kurze Hänger, dann Desync und große Latenz, dann Stottern; ein vorgelagerter VBAN-Puffer läuft voll.
+
+Ein großer VBAN-Puffer (z. B. 200 MB) behebt **keinen** Clock-Drift — er verzögert nur den Überlauf und addiert Latenz. Läuft der Puffer voll, driftet die Quelle gegenüber der Senke; Ursache ist der Sync-Loop bzw. das VM-Timing, nicht die Puffergröße. Empfehlung: Puffer wieder auf Standardgröße stellen und zuerst die Drift-Ursachen beheben (v1.0.1 deaktiviert Idle-Suspend; `log_level` auf `INFO` lassen; Proxmox-Hinweise unten).
+
+### Proxmox / VM-Timing
+
+Läuft HAOS in einer Proxmox-VM, verbessern diese Einstellungen die Audio-Stabilität:
+
+- USB-Controller per **PCIe-Passthrough** durchreichen, nicht per USB-Device-Passthrough.
+- CPU-Typ `host`.
+- Kein Memory-Ballooning.
+- Keine CPU-Überbuchung.
+- Clocksource in der VM prüfen: `cat /sys/devices/system/clocksource/clocksource0/current_clocksource` → sollte `kvm-clock` oder `tsc` sein.
+
+## Rollback
+
+HAOS erkennt Add-on-Updates **ausschließlich** über die Versionsnummer in `config.yaml`. Ein reines `git revert` **ohne** Versionsänderung wird deshalb nicht erkannt.
+
+**Einzelnen Fix zurücknehmen:**
+
+1. Commit finden: `git log --oneline`
+2. `git revert <hash>`
+3. Version in `config.yaml` **und** `run.sh` **hochzählen** (z. B. `1.0.1` → `1.0.2`)
+4. Committen, `git push`
+5. In HAOS beim Add-on **Update** ausführen.
+
+**Komplett auf den letzten stabilen Stand (v1.0.0) zurück:**
+
+Der Tag `v1.0.0-backup` markiert den v1.0.0-Stand.
+
+1. Inhalt zurückholen: `git checkout v1.0.0-backup -- sendspin-usb/`
+2. Version in `config.yaml`/`run.sh` auf eine **neue, höhere** Nummer setzen (z. B. `1.0.2`), damit HAOS das „Update" erkennt.
+3. Committen, `git push`, in HAOS **Update** ausführen.
+
+> Wurde das **`Dockerfile`** geändert (z. B. der sendspin-Pin in v1.1.0), reicht kein Update — das Add-on muss dann **neu installiert** werden.
