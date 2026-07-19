@@ -28,6 +28,12 @@ pactl unload-module module-suspend-on-idle 2>/dev/null || true
 SENDSPIN_VERSION=$(pip show sendspin 2>/dev/null | grep ^Version | awk '{print $2}')
 echo "[INFO] Sendspin USB Players v${VERSION} starting (log_level=${LOG_LEVEL}, static_delay_ms=${STATIC_DELAY:-0}, audio_format=${AUDIO_FORMAT:-auto}, sendspin=${SENDSPIN_VERSION:-unknown})"
 
+# Warn if DEBUG logging is left on permanently (~23 lines/s can stall the
+# asyncio event loop and encourage the sync loop — see DOCS.md).
+if [ "$LOG_LEVEL" = "DEBUG" ]; then
+    echo "[WARNING] log_level=DEBUG im Dauerbetrieb kann Audio-Aussetzer verursachen — nur zur Fehlersuche verwenden (siehe DOCS)."
+fi
+
 # --- Signal handling ---
 PIDS=""
 cleanup() {
