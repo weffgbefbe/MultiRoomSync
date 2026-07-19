@@ -104,14 +104,15 @@ the first time, with no carry-over from the pre-suspend reference.
 
 ---
 
-## Workaround (applied in this add-on)
+## Workaround (in this add-on)
 
-Two mitigations are implemented in the HAOS add-on `sendspin-usb`:
+1. **Disable `module-suspend-on-idle`** — *implemented in v1.0.1.* At container start,
+   `run.sh` runs `pactl unload-module module-suspend-on-idle`, which prevents the device
+   clock from ever stopping and eliminates the root condition.
 
-1. **Disable `module-suspend-on-idle`** at container start via
-   `pactl unload-module module-suspend-on-idle` — prevents the device clock from ever
-   stopping, eliminating the root condition.
-
-2. **Watchdog** — monitors daemon stdout for consecutive re-anchor lines; after 5 re-anchors
-   within 30 seconds it kills and restarts the daemon automatically (max 3 restarts per 5
-   minutes).
+2. **Watchdog** — *evaluated, deliberately not implemented.* A watchdog that monitors daemon
+   stdout for consecutive re-anchor lines and restarts the daemon (e.g. 5 re-anchors within
+   30 s → restart, max 3 restarts per 5 min) was considered as a secondary safety net.
+   It was left out because mitigation 1 removes the root cause, and a prior FIFO-based
+   watchdog in this project blocked the asyncio event loop for up to 16 s. Stability was
+   prioritized over the extra feature. See `DOCS.md` for the rationale.
