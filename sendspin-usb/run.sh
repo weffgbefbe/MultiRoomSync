@@ -93,6 +93,7 @@ while IFS= read -r sink_name; do
         --audio-device "$sink_name" \
         --id "$card_id" \
         --log-level "$LOG_LEVEL" \
+        --disable-mpris \
         ${STATIC_DELAY:+--static-delay-ms "$STATIC_DELAY"} \
         ${AUDIO_FORMAT:+--audio-format "$AUDIO_FORMAT"} &
     PIDS="$PIDS $!"

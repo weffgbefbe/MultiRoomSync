@@ -41,3 +41,15 @@ Format: `codec:samplerate:bitdepth:channels`
 | `flac:48000:24:2` | Hi-Res, verlustfrei |
 
 Alle Player im selben Sync-Verbund sollten das gleiche Format verwenden, um Resampling-Unterschiede zu vermeiden.
+
+## Fehlerbehebung
+
+### DBus/MPRIS-Warnung (behoben)
+
+Frühere Versionen zeigten bei jedem Player-Start:
+
+```
+WARNING:aiosendspin_mpris.mpris_service:MPRIS not available: DBus address error
+```
+
+MPRIS braucht einen Session-DBus, den es im HAOS-Add-on-Container (headless, `init: false`) nicht gibt — und MPRIS ist hier ohnehin nutzlos, weil die Steuerung über Music Assistant läuft. Seit **v1.0.1** startet das Add-on jeden Daemon mit `--disable-mpris`; die Warnung entfällt.
