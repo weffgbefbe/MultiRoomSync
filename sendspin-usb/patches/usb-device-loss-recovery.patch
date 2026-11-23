@@ -1,0 +1,223 @@
+diff --git a/sendspin/audio.py b/sendspin/audio.py
+index 5bf1a63..3e24d9c 100644
+--- a/sendspin/audio.py
++++ b/sendspin/audio.py
+@@ -21,7 +21,7 @@ import sounddevice
+ from aiosendspin.client.time_sync import SendspinTimeFilter
+ from sounddevice import CallbackFlags
+ 
+-from sendspin.audio_devices import SOUNDDEVICE_DTYPE_MAP, AudioDevice
++from sendspin.audio_devices import SOUNDDEVICE_DTYPE_MAP, AudioDevice, query_devices
+ 
+ try:
+     from sendspin._volume import apply_volume as _c_apply_volume
+@@ -136,6 +136,10 @@ class AudioPlayer:
+     _CORRECTION_TARGET_SECONDS: Final[float] = 8.0
+     """Target window to fix sync error through micro-corrections (8 seconds)."""
+     _CORRECTION_START_GRACE_US: Final[int] = 750_000
++    _STREAM_STALL_TIMEOUT_US: Final[int] = 2_000_000
++    """No audio callback for this long while started = output device lost (e.g. USB unplug)."""
++    _DEVICE_REOPEN_INTERVAL_US: Final[int] = 2_000_000
++    """Minimum time between attempts to reopen a lost output device."""
+     """Delay sync corrections after startup so DAC/time-sync estimates can settle."""
+ 
+     def __init__(
+@@ -245,6 +249,14 @@ class AudioPlayer:
+         # Thread-safe flag for deferred operations (audio thread → main thread)
+         self._clear_requested: bool = False
+ 
++        # Output device loss detection / recovery
++        self._audio_format: AudioFormat | None = None
++        self._device: AudioDevice | None = None
++        self._last_callback_loop_time_us: int = 0
++        self._stream_started_loop_time_us: int = 0
++        self._device_lost: bool = False
++        self._last_reopen_attempt_us: int = 0
++
+     def set_format(self, audio_format: AudioFormat, device: AudioDevice) -> None:
+         """Configure the audio output format.
+ 
+@@ -254,6 +266,12 @@ class AudioPlayer:
+         """
+         pcm_format = audio_format.pcm_format
+         self._format = pcm_format
++        self._audio_format = audio_format
++        if self._device is not None and device.name == self._device.name:
++            # Keep an index re-resolved after a hot-plug; the caller still holds the old one.
++            device = self._device
++        self._device = device
++        self._device_lost = False
+         self._close_stream()
+ 
+         # Reset state on format change
+@@ -261,15 +279,14 @@ class AudioPlayer:
+         self._first_real_chunk = True
+ 
+         # Low latency settings for accurate playback (chunks arrive 5+ seconds early)
+-        self._stream = sounddevice.RawOutputStream(
+-            samplerate=pcm_format.sample_rate,
+-            channels=pcm_format.channels,
+-            dtype=SOUNDDEVICE_DTYPE_MAP[pcm_format.bit_depth],
+-            blocksize=self._BLOCKSIZE,
+-            callback=self._audio_callback,
+-            latency="high",
+-            device=device.device_id,
+-        )
++        try:
++            self._stream = self._open_stream(pcm_format, device)
++        except sounddevice.PortAudioError as err:
++            # Device vanished (USB unplug) - let the watchdog in submit() keep retrying.
++            logger.warning("Opening output device %s failed: %s", device.device_id, err)
++            self._stream = None
++            self._device_lost = True
++            return
+         self._output_latency_us = int(self._stream.latency * self._MICROSECONDS_PER_SECOND)
+         logger.info(
+             "Audio stream configured: codec=%s, sample_rate=%d, channels=%d, bit_depth=%d, blocksize=%d, latency=high, output_latency=%.1f ms, device=%s",
+@@ -282,6 +299,20 @@ class AudioPlayer:
+             device.device_id,
+         )
+ 
++    def _open_stream(
++        self, pcm_format: PCMFormat, device: AudioDevice
++    ) -> sounddevice.RawOutputStream:
++        """Open the PortAudio output stream for the given format and device."""
++        return sounddevice.RawOutputStream(
++            samplerate=pcm_format.sample_rate,
++            channels=pcm_format.channels,
++            dtype=SOUNDDEVICE_DTYPE_MAP[pcm_format.bit_depth],
++            blocksize=self._BLOCKSIZE,
++            callback=self._audio_callback,
++            latency="high",
++            device=device.device_id,
++        )
++
+     @property
+     def volume(self) -> int:
+         """Get the current volume level (0-100)."""
+@@ -425,6 +456,7 @@ class AudioPlayer:
+             status: Status flags (underrun, overflow, etc.).
+         """
+         callback_start_us = self._now_us()
++        self._last_callback_loop_time_us = callback_start_us
+ 
+         assert self._format is not None
+ 
+@@ -452,7 +484,15 @@ class AudioPlayer:
+             and self._server_ts_cursor_us > 0
+             and self._force_reanchor
+         ):
+-            self._server_ts_cursor_us = self._last_known_playback_position_us
++            target_us = self._last_known_playback_position_us
++            read_pos_us = self._actual_read_position_us()
++            if read_pos_us is not None and target_us > read_pos_us:
++                # Audio being read is older than what should play now (e.g. after the
++                # output stalled): drop it, otherwise we stay late while the cursor
++                # claims to be in sync.
++                lag_frames = (target_us - read_pos_us) * self._format.sample_rate // 1_000_000
++                self._skip_input_frames(int(lag_frames))
++            self._server_ts_cursor_us = target_us
+             self._server_ts_cursor_remainder = 0
+             self._force_reanchor = False
+             self._insert_every_n_frames = 0
+@@ -624,6 +664,82 @@ class AudioPlayer:
+             # time object may not have expected attributes in all backends
+             logger.debug("Could not extract timing info from callback")
+ 
++    def _actual_read_position_us(self) -> int | None:
++        """Server timestamp of the next frame that will actually be read from the queue."""
++        assert self._format is not None
++        chunk = self._current_chunk
++        if chunk is not None:
++            frames = self._current_chunk_offset // self._format.frame_size
++            return chunk.server_timestamp_us + frames * 1_000_000 // self._format.sample_rate
++        try:
++            head: _QueuedChunk = self._queue.queue[0]
++        except IndexError:
++            return None
++        return head.server_timestamp_us
++
++    def _check_stream_health(self, now_us: int) -> None:
++        """Detect a dead output stream (device unplugged) and try to reopen it.
++
++        PortAudio does not raise into Python when an ALSA device disappears: the
++        callback thread just stops. Without this check the player stays silent
++        until the process is restarted.
++        """
++        if self._audio_format is None or self._device is None:
++            return
++        if not self._device_lost:
++            stream = self._stream
++            if stream is None or not self._stream_started:
++                return
++            last = max(self._last_callback_loop_time_us, self._stream_started_loop_time_us)
++            stalled = now_us - last > self._STREAM_STALL_TIMEOUT_US
++            inactive = not getattr(stream, "active", True)
++            if not (stalled or inactive):
++                return
++            logger.warning(
++                "Audio output stalled for %.1f s (active=%s); output device lost, reopening",
++                (now_us - last) / 1e6,
++                not inactive,
++            )
++            self._device_lost = True
++            self._close_stream()
++        if now_us - self._last_reopen_attempt_us < self._DEVICE_REOPEN_INTERVAL_US:
++            return
++        self._last_reopen_attempt_us = now_us
++        self._reopen_lost_device()
++
++    def _reopen_lost_device(self) -> None:
++        """Re-enumerate PortAudio, find the device again by name, reopen and resync."""
++        assert self._audio_format is not None and self._device is not None
++        old = self._device
++        try:
++            # PortAudio caches the device list from Pa_Initialize(); a re-plugged USB
++            # device is invisible (or has a different index) until we re-initialize.
++            sounddevice._terminate()
++            sounddevice._initialize()
++            found: AudioDevice | None = old
++            if old.alsa_device_name is None:
++                found = next((d for d in query_devices() if d.name == old.name), None)
++            if found is None:
++                logger.info("Output device '%s' not back yet; will retry", old.name)
++                return
++            device = found
++            self.clear()
++            self._device = device  # so set_format() does not fall back to the stale index
++            self.set_format(self._audio_format, device)
++            if self._stream is None:
++                return  # open failed; set_format() logged it and the watchdog retries
++        except Exception as err:  # noqa: BLE001
++            logger.info("Reopening output device '%s' failed (%s); will retry", old.name, err)
++            self._stream = None
++            self._device_lost = True
++            return
++        logger.warning(
++            "Output device '%s' reopened (index %s -> %s); resynchronising",
++            old.name,
++            old.device_id,
++            device.device_id,
++        )
++
+     def _initialize_current_chunk(self) -> None:
+         """Load next chunk from queue and initialize read position.
+ 
+@@ -1140,6 +1256,8 @@ class AudioPlayer:
+         if self._closed:
+             return
+ 
++        self._check_stream_health(self._now_us())
++
+         # Handle deferred operations from audio thread
+         if self._clear_requested:
+             self._clear_requested = False
+@@ -1284,6 +1402,8 @@ class AudioPlayer:
+             )
+         ):
+             self._stream_started = True
++            self._stream_started_loop_time_us = now_us
++            self._last_callback_loop_time_us = 0
+             self._stream_executor.submit(self._call_stream, self._stream.start)
+             logger.info(
+                 "Stream STARTED: %d chunks, %.2f seconds buffered",
