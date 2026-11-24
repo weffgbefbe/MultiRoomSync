@@ -17,7 +17,7 @@ if [ -f /data/options.json ]; then
     fmt=$(grep -o '"audio_format"\s*:\s*"[^"]*"' /data/options.json | sed 's/.*"\([^"]*\)"$/\1/')
     [ -n "$fmt" ] && AUDIO_FORMAT="$fmt"
 fi
-VERSION="1.1.0"
+VERSION="1.1.1"
 export PULSE_SERVER="unix:/run/audio/pulse.sock"
 
 # Disable idle-suspend — prevents the re-anchor loop after playback pauses.
